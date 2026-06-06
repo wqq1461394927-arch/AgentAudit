@@ -1,0 +1,276 @@
+// Prisma Schema for Module 5 - Settlement & Reputation System
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== 漏洞与结算 ====================
+
+model Vulnerability {
+  id               String          @id @default(uuid())
+  vulId            String          @unique
+  title            String
+  description      String
+  bounty           Decimal         @db.Decimal(20, 6)
+  status           String          @default("PENDING")
+  // Status: PENDING, ACCEPTED, CHALLENGED, ARBITRATING, VALID, INVALID, SETTLED
+  
+  submitter        String
+  projectAddress   String
+  projectName      String?
+  
+  challengeBond    Decimal?        @db.Decimal(20, 18)
+  challengeReason  String?
+  challengeAt      DateTime?
+  
+  createdAt        DateTime        @default(now())
+  arbitratedAt     DateTime?
+  settledAt        DateTime?
+  
+  totalConfidence  Decimal?        @db.Decimal(10, 2)
+  
+  // 关联关系
+  submissions      Submission[]     @relation("VulSubmissions")
+  auditLogs        AuditLog[]
+  rewardDistributions RewardDistribution[]
+  
+  @@index([status])
+  @@index([projectAddress])
+  @@index([createdAt])
+}
+
+model Submission {
+  id               String          @id @default(uuid())
+  vulId            String
+  subVulId         String          // 来自模块4的子漏洞ID
+  
+  submitter        String
+  submitterName    String?
+  walletAddress    String
+  
+  // 来自模块2 (AI发现)
+  agentId          String?
+  confidence       Decimal         @db.Decimal(5, 2)  // AI置信度 0-100
+  
+  // 质量评分 (由人工或AI评估)
+  qualityScore     Decimal         @db.Decimal(10, 2)
+  pocQuality       Int?            // PoC质量 1-10
+  fixQuality       Int?            // 修复建议质量 1-10
+  
+  // 来自模块4 (聚类)
+  ranking          Int             @default(0)
+  clusterId        String?
+  
+  // 校准后奖励
+  calibratedReward Decimal?        @db.Decimal(20, 6)
+  baseReward       Decimal?        @db.Decimal(20, 6)
+  calibrationMult  Decimal?        @db.Decimal(5, 2)   // 校准乘数
+  
+  rewarded         Boolean         @default(false)
+  rewardedAt       DateTime?
+  
+  createdAt        DateTime        @default(now())
+  
+  vulnerability    Vulnerability   @relation(fields: [vulId], references: [vulId])
+  
+  @@index([vulId])
+  @@index([submitter])
+  @@index([ranking])
+}
+
+// ==================== 奖励分配记录 ====================
+
+model RewardDistribution {
+  id               String          @id @default(uuid())
+  vulId            String
+  totalBounty     Decimal         @db.Decimal(20, 6)
+  
+  // JSON格式的分配明细
+  distributions    Json            // [{address, amount, ranking, calibration}]
+  
+  totalDistributed Decimal         @db.Decimal(20, 6)
+  platformFee      Decimal?        @db.Decimal(20, 6)
+  
+  txHash          String?
+  blockNumber     Int?
+  
+  createdAt       DateTime        @default(now())
+  
+  vulnerability    Vulnerability   @relation(fields: [vulId], references: [vulId])
+  
+  @@index([vulId])
+}
+
+// ==================== 审计师声誉 ====================
+
+model Auditor {
+  id               String          @id @default(uuid())
+  walletAddress    String          @unique
+  name             String
+  email            String?
+  
+  reputation       Decimal         @default(0) @db.Decimal(10, 2)
+  level            String          @default("Rookie")
+  // Level: Rookie, Bronze, Silver, Gold, Elite
+  
+  totalSubmissions Int             @default(0)
+  validSubmissions Int             @default(0)
+  invalidSubmissions Int           @default(0)
+  
+  totalBounty      Decimal         @default(0) @db.Decimal(20, 6)
+  maxSubmissions    Int             @default(5)  // 根据等级限制
+  
+  lastActive       DateTime        @default(now())
+  createdAt        DateTime        @default(now())
+  
+  submissions      Submission[]
+  auditLogs        AuditLog[]
+  
+  @@index([reputation])
+  @@index([level])
+}
+
+// ==================== AI Agent校准 ====================
+
+model AIAgent {
+  id               String          @id @default(uuid())
+  agentId          String          @unique          // Agent唯一标识
+  name             String
+  description      String?
+  
+  // 校准数据
+  totalReports     Int             @default(0)
+  correctPredictions Int            @default(0)
+  calibration      Decimal         @default(0) @db.Decimal(5, 2)  // 0-100%
+  
+  // 置信度追踪
+  avgConfidence    Decimal         @default(0) @db.Decimal(5, 2)
+  avgActualAccuracy Decimal        @default(0) @db.Decimal(5, 2)
+  
+  // 声誉
+  reputation       Decimal         @default(0) @db.Decimal(10, 2)
+  
+  // 校准乘数
+  multiplier       Decimal         @default(100) @db.Decimal(5, 2)  // 基数为100
+  
+  lastCalibration  DateTime        @default(now())
+  createdAt        DateTime        @default(now())
+  
+  submissions      Submission[]
+  
+  @@index([calibration])
+  @@index([reputation])
+}
+
+// ==================== 仲裁员 ====================
+
+model Juror {
+  id               String          @id @default(uuid())
+  walletAddress    String          @unique
+  name             String?
+  
+  stake            Decimal         @db.Decimal(20, 18)
+  reputation       Decimal         @default(100) @db.Decimal(5, 2)
+  
+  totalVotes       Int             @default(0)
+  correctVotes     Int             @default(0)
+  incorrectVotes   Int             @default(0)
+  
+  slashedAmount    Decimal         @default(0) @db.Decimal(20, 18)
+  totalRewards     Decimal         @default(0) @db.Decimal(20, 18)
+  
+  active           Boolean         @default(true)
+  lastActive       DateTime        @default(now())
+  createdAt        DateTime        @default(now())
+  
+  @@index([reputation])
+  @@index([active])
+}
+
+// ==================== 仲裁记录 ====================
+
+model Arbitration {
+  id               String          @id @default(uuid())
+  vulId            String
+  status           String          @default("PENDING")
+  // Status: PENDING, VOTING, DECIDED
+  
+  challengeReason  String?
+  challengeBond    Decimal?        @db.Decimal(20, 18)
+  
+  // 抽选的仲裁员
+  selectedJurors   Json            // [{jurorAddress, voted, vote}]
+  
+  // 投票结果
+  validVotes       Int             @default(0)
+  invalidVotes     Int             @default(0)
+  totalVotes       Int             @default(0)
+  
+  // 最终裁决
+  finalResult      String?         // VALID, INVALID
+  arbitrator       String?         // 裁决者 (MVP为owner)
+  
+  deadline         DateTime?
+  decidedAt        DateTime?
+  
+  createdAt        DateTime        @default(now())
+  
+  @@index([vulId])
+  @@index([status])
+}
+
+// ==================== 审计日志 ====================
+
+model AuditLog {
+  id               String          @id @default(uuid())
+  
+  // 操作类型
+  action          String
+  // Actions: ACCEPT, CHALLENGE, ARBITRATE, SETTLE, REGISTER, UPDATE_REP
+  
+  // 涉及实体
+  vulnerabilityId  String?
+  auditorId        String?
+  agentId          String?
+  jurorId          String?
+  
+  // 操作详情
+  details         Json             // 灵活的详情存储
+  
+  // 操作者
+  operator        String?
+  operatorType    String?          // SYSTEM, ADMIN, PROJECT, AUDITOR
+  
+  txHash          String?
+  blockNumber     Int?
+  
+  createdAt       DateTime        @default(now())
+  
+  vulnerability    Vulnerability?  @relation(fields: [vulnerabilityId], references: [vulId])
+  auditor          Auditor?        @relation(fields: [auditorId], references: [id])
+  
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ==================== Webhook配置 ====================
+
+model WebhookConfig {
+  id               String          @id @default(uuid())
+  name             String
+  event            String          // 触发事件
+  url              String
+  secret           String?
+  active           Boolean         @default(true)
+  retryCount       Int             @default(3)
+  
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  
+  @@index([event])
+}
