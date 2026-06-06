@@ -51,13 +51,13 @@ describe("AgentRegistry", function () {
       await agentRegistry.connect(agent1).registerAgent("SecurityAgent", 0, "http://agent1.test");
       await expect(
         agentRegistry.connect(agent1).registerAgent("AnotherAgent", 1, "http://agent2.test")
-      ).to.be.revertedWith("AgentRegistry: already registered");
+      ).to.be.revertedWith("AR: registered");
     });
 
     it("should revert on empty name", async function () {
       await expect(
         agentRegistry.connect(agent1).registerAgent("", 0, "http://agent1.test")
-      ).to.be.revertedWith("AgentRegistry: empty name");
+      ).to.be.revertedWith("AR: empty name");
     });
 
     it("should track agent list", async function () {
@@ -130,7 +130,7 @@ describe("AgentRegistry", function () {
       const [,,,,, notOwner] = await ethers.getSigners();
       await expect(
         agentRegistry.connect(notOwner).assignAgentsToTask(1, [agent1.address])
-      ).to.be.revertedWith("AgentRegistry: not task owner");
+      ).to.be.revertedWith("AR: not owner");
     });
 
     it("should revert if exceeds max agents", async function () {
@@ -142,14 +142,14 @@ describe("AgentRegistry", function () {
         agentRegistry.connect(projectOwner).assignAgentsToTask(1, [
           agent1.address, agent2.address, agent3.address, a4.address
         ])
-      ).to.be.revertedWith("AgentRegistry: exceeds max agents");
+      ).to.be.revertedWith("AR: exceeds max");
     });
 
     it("should revert on duplicate assignment", async function () {
       await agentRegistry.connect(projectOwner).assignAgentsToTask(1, [agent1.address]);
       await expect(
         agentRegistry.connect(projectOwner).assignAgentsToTask(1, [agent1.address])
-      ).to.be.revertedWith("AgentRegistry: already assigned");
+      ).to.be.revertedWith("AR: assigned");
     });
   });
 
@@ -169,7 +169,7 @@ describe("AgentRegistry", function () {
         owner.address
       );
       await taskManager.activateTask(1);
-      await taskManager.transitionToCommitting(1);
+      await taskManager.transitionPhase(1, 1, 2);
     });
 
     it("should commit a finding hash", async function () {
@@ -190,7 +190,7 @@ describe("AgentRegistry", function () {
 
       await expect(
         agentRegistry.connect(agent1).commitFinding(1, commitHash)
-      ).to.be.revertedWith("AgentRegistry: already committed");
+      ).to.be.revertedWith("AR: committed");
     });
 
     it("should reveal and verify hash match", async function () {
@@ -204,7 +204,7 @@ describe("AgentRegistry", function () {
       await agentRegistry.connect(agent1).commitFinding(1, commitHash);
 
       // Advance to Revealing
-      await taskManager.transitionToRevealing(1);
+      await taskManager.transitionPhase(1, 2, 3);
 
       // Reveal
       await agentRegistry.connect(agent1).revealFinding(1, rawFinding, salt);
@@ -224,18 +224,18 @@ describe("AgentRegistry", function () {
       );
 
       await agentRegistry.connect(agent1).commitFinding(1, commitHash);
-      await taskManager.transitionToRevealing(1);
+      await taskManager.transitionPhase(1, 2, 3);
 
       await expect(
         agentRegistry.connect(agent1).revealFinding(1, ethers.toUtf8Bytes("wrong data"), salt)
-      ).to.be.revertedWith("AgentRegistry: hash mismatch");
+      ).to.be.revertedWith("AR: hash mismatch");
     });
 
     it("should revert reveal if not committed", async function () {
-      await taskManager.transitionToRevealing(1);
+      await taskManager.transitionPhase(1, 2, 3);
       await expect(
         agentRegistry.connect(agent1).revealFinding(1, ethers.toUtf8Bytes("test"), ethers.randomBytes(32))
-      ).to.be.revertedWith("AgentRegistry: not committed");
+      ).to.be.revertedWith("AR: bad state");
     });
 
     it("should revert reveal in wrong phase", async function () {
@@ -245,7 +245,7 @@ describe("AgentRegistry", function () {
       // Still in Committing, not Revealing
       await expect(
         agentRegistry.connect(agent1).revealFinding(1, ethers.toUtf8Bytes("test"), ethers.randomBytes(32))
-      ).to.be.revertedWith("AgentRegistry: not in revealing phase");
+      ).to.be.revertedWith("AR: not revealing");
     });
 
     it("should revert if agent not assigned", async function () {
@@ -253,7 +253,7 @@ describe("AgentRegistry", function () {
       // agent3 已注册但未分配给该任务
       await expect(
         agentRegistry.connect(agent3).commitFinding(1, ethers.keccak256(ethers.toUtf8Bytes("test")))
-      ).to.be.revertedWith("AgentRegistry: not assigned to task");
+      ).to.be.revertedWith("AR: not assigned");
     });
 
     it("should slash non-revealers", async function () {
@@ -266,7 +266,7 @@ describe("AgentRegistry", function () {
 
       await agentRegistry.connect(agent1).commitFinding(1, commitHash);
       await agentRegistry.connect(agent2).commitFinding(1, commitHash);
-      await taskManager.transitionToRevealing(1);
+      await taskManager.transitionPhase(1, 2, 3);
       await agentRegistry.connect(agent2).revealFinding(1, rawFinding, salt);
 
       // slash agent1 (committed but didn't reveal)

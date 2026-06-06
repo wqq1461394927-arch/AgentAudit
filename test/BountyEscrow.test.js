@@ -96,7 +96,7 @@ describe("BountyEscrow", function () {
 
       await expect(
         bountyEscrow.connect(otherUser).lockBounty(1)
-      ).to.be.revertedWith("BountyEscrow: not task owner");
+      ).to.be.revertedWith("BE: not owner");
     });
 
     it("should revert if task not in Created status", async function () {
@@ -120,11 +120,11 @@ describe("BountyEscrow", function () {
       await bountyEscrow.connect(projectOwner).lockBounty(1);
 
       // 手动推进到 Settled（模拟完整生命周期）
-      await taskManager.transitionToCommitting(1);
-      await taskManager.transitionToRevealing(1);
-      await taskManager.transitionToClustering(1);
-      await taskManager.transitionToChallenging(1);
-      await taskManager.transitionToSettled(1);
+      await taskManager.transitionPhase(1, 1, 2);
+      await taskManager.transitionPhase(1, 2, 3);
+      await taskManager.transitionPhase(1, 3, 4);
+      await taskManager.transitionPhase(1, 4, 5);
+      await taskManager.transitionPhase(1, 5, 6);
     }
 
     it("should distribute rewards and refund remaining", async function () {
@@ -165,7 +165,7 @@ describe("BountyEscrow", function () {
 
       await expect(
         bountyEscrow.distributeRewards(1, [otherUser.address], [ethers.parseEther("100")])
-      ).to.be.revertedWith("BountyEscrow: already settled");
+      ).to.be.revertedWith("BE: settled");
     });
 
     it("should revert if total exceeds bounty (ERC20 insufficient balance)", async function () {
@@ -179,7 +179,7 @@ describe("BountyEscrow", function () {
       await lockAndSettleTask();
       await expect(
         bountyEscrow.distributeRewards(1, [otherUser.address], [])
-      ).to.be.revertedWith("BountyEscrow: length mismatch");
+      ).to.be.revertedWith("BE: len mismatch");
     });
 
     it("should revert if not in Settled/Closed status", async function () {
@@ -192,7 +192,7 @@ describe("BountyEscrow", function () {
       // 不能分配（状态为 Active）
       await expect(
         bountyEscrow.distributeRewards(1, [otherUser.address], [ethers.parseEther("100")])
-      ).to.be.revertedWith("BountyEscrow: not settled");
+      ).to.be.revertedWith("BE: not settled");
     });
   });
 

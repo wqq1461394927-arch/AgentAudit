@@ -4,271 +4,141 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "../interfaces/ITypes.sol";
+import "../interfaces/ITaskManager.sol";
 
 /**
  * @title AgentRegistry
- * @notice Agent 注册与配置系统
- * @dev 管理 AI 安全审计 Agent 的注册、发现和任务分配。
- *      项目方可自由选择参与任务的 Agent 类型。
- *      未来支持第三方开发者发布自定义 Agent。
+ * @notice Agent 注册与任务分配 —— Commit-Reveal 漏洞提交机制
+ * @dev 项目方可自由选择参与任务的 Agent 类型，支持第三方开发者发布自定义 Agent
  */
 contract AgentRegistry is AccessControl, ReentrancyGuard, ITypes {
-    // ============ 事件 ============
     event AgentRegistered(address indexed agent, string name, AgentType agentType);
     event AgentUpdated(address indexed agent);
     event AgentSuspended(address indexed agent);
     event AgentReactivated(address indexed agent);
     event TaskAgentAssigned(uint256 indexed taskId, address indexed agent, AgentType agentType);
-    event TaskAgentRemoved(uint256 indexed taskId, address indexed agent);
     event AgentCommitted(uint256 indexed taskId, address indexed agent, bytes32 commitHash);
     event AgentRevealed(uint256 indexed taskId, address indexed agent);
 
-    // ============ 状态变量 ============
-    address public taskManager;
+    ITaskManager public immutable taskManager;
 
-    // 所有已注册 Agent
     mapping(address => Agent) public agents;
     address[] public agentList;
 
-    // taskId => agent => TaskAgentConfig
     mapping(uint256 => mapping(address => TaskAgentConfig)) public taskAgents;
-
-    // taskId => agent address list
     mapping(uint256 => address[]) public taskAgentList;
-
-    // Commit 记录: taskId => agent => CommitRecord
     mapping(uint256 => mapping(address => CommitRecord)) public commits;
 
-    // 默认系统 Agent 地址
     address public securityAgent;
     address public tokenomicsAgent;
     address public staticAnalysisAgent;
 
-    // ============ 修饰符 ============
-    modifier onlyTaskManager() {
-        require(msg.sender == taskManager, "AgentRegistry: only TaskManager");
-        _;
-    }
-
     modifier onlyActiveAgent() {
-        require(agents[msg.sender].status == AgentStatus.Active, "AgentRegistry: not active agent");
+        require(agents[msg.sender].status == AgentStatus.Active, "AR: not active");
         _;
     }
 
-    // ============ 构造函数 ============
-    constructor(address _taskManager) {
-        require(_taskManager != address(0), "AgentRegistry: zero address");
-        taskManager = _taskManager;
+    constructor(address _tm) {
+        require(_tm != address(0), "AR: zero addr");
+        taskManager = ITaskManager(_tm);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
     // ============ Agent 注册 ============
-
-    /**
-     * @notice 注册新 Agent
-     * @param _name Agent 名称
-     * @param _agentType Agent 类型
-     * @param _endpoint Agent API 端点
-     */
     function registerAgent(string calldata _name, AgentType _agentType, string calldata _endpoint) external {
-        require(bytes(_name).length > 0, "AgentRegistry: empty name");
-        require(agents[msg.sender].registeredAt == 0, "AgentRegistry: already registered");
-
-        agents[msg.sender] = Agent({
-            agentAddress: msg.sender,
-            name: _name,
-            agentType: _agentType,
-            endpoint: _endpoint,
-            totalTasks: 0,
-            successfulFinds: 0,
-            reputation: 100,
-            status: AgentStatus.Active,
-            registeredAt: block.timestamp
-        });
-
+        require(bytes(_name).length > 0, "AR: empty name");
+        require(agents[msg.sender].registeredAt == 0, "AR: registered");
+        agents[msg.sender] = Agent(msg.sender, _name, _agentType, _endpoint, 0, 0, 100, AgentStatus.Active, block.timestamp);
         agentList.push(msg.sender);
-
         emit AgentRegistered(msg.sender, _name, _agentType);
     }
 
-    // ============ 默认系统 Agent 设置 ============
-
-    function setDefaultAgent(AgentType _agentType, address _agentAddr) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_agentAddr != address(0), "AgentRegistry: zero address");
-        require(agents[_agentAddr].status == AgentStatus.Active, "AgentRegistry: not active agent");
-
-        if (_agentType == AgentType.Security) {
-            securityAgent = _agentAddr;
-        } else if (_agentType == AgentType.Tokenomics) {
-            tokenomicsAgent = _agentAddr;
-        } else if (_agentType == AgentType.StaticAnalysis) {
-            staticAnalysisAgent = _agentAddr;
-        }
+    // ============ 默认 Agent ============
+    function setDefaultAgent(AgentType _t, address _a) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_a != address(0) && agents[_a].status == AgentStatus.Active, "AR: bad agent");
+        if (_t == AgentType.Security) securityAgent = _a;
+        else if (_t == AgentType.Tokenomics) tokenomicsAgent = _a;
+        else staticAnalysisAgent = _a;
     }
-
     function getDefaultAgents() external view returns (address, address, address) {
         return (securityAgent, tokenomicsAgent, staticAnalysisAgent);
     }
 
     // ============ 任务-Agent 分配 ============
+    function assignAgentsToTask(uint256 _taskId, address[] calldata _addrs) external {
+        (uint256 _id, address taskOwner, address _token, uint256 _bounty, uint256 maxAgents, uint8 _stat) = taskManager.getTaskEscrowData(_taskId);
+        _id; _token; _bounty; _stat;
+        require(taskOwner == msg.sender, "AR: not owner");
+        require(taskAgentList[_taskId].length + _addrs.length <= maxAgents, "AR: exceeds max");
 
-    /**
-     * @notice 项目方为任务分配 Agent
-     * @param _taskId 任务 ID
-     * @param _agents Agent 地址列表
-     */
-    function assignAgentsToTask(uint256 _taskId, address[] calldata _agents) external {
-        // 验证调用者是任务 owner + 获取 maxAgents
-        (bool success, bytes memory data) = taskManager.staticcall(
-            abi.encodeWithSignature("getTaskEscrowData(uint256)", _taskId)
-        );
-        require(success);
-        (, address taskOwner,,, uint256 maxAgents,) =
-            abi.decode(data, (uint256, address, address, uint256, uint256, uint8));
-        require(taskOwner == msg.sender, "AgentRegistry: not task owner");
-
-        require(taskAgentList[_taskId].length + _agents.length <= maxAgents, "AgentRegistry: exceeds max agents");
-
-        for (uint256 i = 0; i < _agents.length; i++) {
-            address agentAddr = _agents[i];
-            require(agents[agentAddr].status == AgentStatus.Active, "AgentRegistry: agent not active");
-            require(taskAgents[_taskId][agentAddr].assignedAt == 0, "AgentRegistry: already assigned");
-
-            taskAgents[_taskId][agentAddr] = TaskAgentConfig({
-                taskId: _taskId,
-                agent: agentAddr,
-                agentType: agents[agentAddr].agentType,
-                assignedAt: block.timestamp,
-                hasCommitted: false,
-                hasRevealed: false
-            });
-
-            taskAgentList[_taskId].push(agentAddr);
-            agents[agentAddr].totalTasks++;
-
-            emit TaskAgentAssigned(_taskId, agentAddr, agents[agentAddr].agentType);
+        for (uint256 i = 0; i < _addrs.length; i++) {
+            address a = _addrs[i];
+            require(agents[a].status == AgentStatus.Active, "AR: not active");
+            require(taskAgents[_taskId][a].assignedAt == 0, "AR: assigned");
+            taskAgents[_taskId][a] = TaskAgentConfig(_taskId, a, agents[a].agentType, block.timestamp, false, false);
+            taskAgentList[_taskId].push(a);
+            agents[a].totalTasks++;
+            emit TaskAgentAssigned(_taskId, a, agents[a].agentType);
         }
     }
 
-    // ============ Commit-Reveal (由 Agent 调用) ============
-
-    /**
-     * @notice Agent 在 Commit 阶段提交漏洞 Hash
-     * @param _taskId 任务 ID
-     * @param _commitHash keccak256(漏洞内容 + salt)
-     */
-    function commitFinding(uint256 _taskId, bytes32 _commitHash) external onlyActiveAgent {
+    // ============ Commit-Reveal ============
+    function commitFinding(uint256 _taskId, bytes32 _hash) external onlyActiveAgent {
         TaskAgentConfig storage cfg = taskAgents[_taskId][msg.sender];
-        require(cfg.assignedAt > 0, "AgentRegistry: not assigned to task");
-        require(!cfg.hasCommitted, "AgentRegistry: already committed");
-
-        // 验证任务状态
-        (bool success, bytes memory data) = taskManager.staticcall(
-            abi.encodeWithSignature("getTaskEscrowData(uint256)", _taskId)
-        );
-        require(success);
-        (,,,,, uint8 status) = abi.decode(data, (uint256, address, address, uint256, uint256, uint8));
-        require(status == uint8(TaskStatus.Committing), "AgentRegistry: not in committing phase");
+        require(cfg.assignedAt > 0, "AR: not assigned");
+        require(!cfg.hasCommitted, "AR: committed");
+        (uint256 _i, address _o, address _t, uint256 _b, uint256 _m, uint8 status) = taskManager.getTaskEscrowData(_taskId);
+        _i; _o; _t; _b; _m;
+        require(status == uint8(TaskStatus.Committing), "AR: not committing");
 
         cfg.hasCommitted = true;
-
-        commits[_taskId][msg.sender] = CommitRecord({
-            commitHash: _commitHash,
-            taskId: _taskId,
-            agent: msg.sender,
-            timestamp: block.timestamp,
-            revealed: false
-        });
-
-        emit AgentCommitted(_taskId, msg.sender, _commitHash);
+        commits[_taskId][msg.sender] = CommitRecord(_hash, _taskId, msg.sender, block.timestamp, false);
+        emit AgentCommitted(_taskId, msg.sender, _hash);
     }
 
-    /**
-     * @notice Agent 在 Reveal 阶段公开漏洞报告
-     * @param _taskId 任务 ID
-     * @param _rawFinding 原始漏洞数据
-     * @param _salt 用于验证 CommitHash 的盐值
-     */
-    function revealFinding(uint256 _taskId, bytes calldata _rawFinding, bytes32 _salt) external onlyActiveAgent {
+    function revealFinding(uint256 _taskId, bytes calldata _finding, bytes32 _salt) external onlyActiveAgent {
         TaskAgentConfig storage cfg = taskAgents[_taskId][msg.sender];
-        require(cfg.assignedAt > 0, "AgentRegistry: not assigned");
-        require(cfg.hasCommitted, "AgentRegistry: not committed");
-        require(!cfg.hasRevealed, "AgentRegistry: already revealed");
-
-        // 验证 Reveal 阶段
-        (bool success, bytes memory data) = taskManager.staticcall(
-            abi.encodeWithSignature("getTaskEscrowData(uint256)", _taskId)
-        );
-        require(success);
-        (,,,,, uint8 status) = abi.decode(data, (uint256, address, address, uint256, uint256, uint8));
-        require(status == uint8(TaskStatus.Revealing), "AgentRegistry: not in revealing phase");
-
-        // 验证 Hash
-        bytes32 computedHash = keccak256(abi.encodePacked(_rawFinding, _salt));
-        require(computedHash == commits[_taskId][msg.sender].commitHash, "AgentRegistry: hash mismatch");
+        require(cfg.assignedAt > 0 && cfg.hasCommitted && !cfg.hasRevealed, "AR: bad state");
+        (uint256 _i, address _o, address _t, uint256 _b, uint256 _m, uint8 status) = taskManager.getTaskEscrowData(_taskId);
+        _i; _o; _t; _b; _m;
+        require(status == uint8(TaskStatus.Revealing), "AR: not revealing");
+        require(keccak256(abi.encodePacked(_finding, _salt)) == commits[_taskId][msg.sender].commitHash, "AR: hash mismatch");
 
         cfg.hasRevealed = true;
         commits[_taskId][msg.sender].revealed = true;
-
         emit AgentRevealed(_taskId, msg.sender);
     }
 
-    /**
-     * @notice 惩罚未 Reveal 的 Agent（Commit 后未公开）
-     */
-    function slashNonRevealers(uint256 _taskId, address[] calldata _agents) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        for (uint256 i = 0; i < _agents.length; i++) {
-            TaskAgentConfig storage cfg = taskAgents[_taskId][_agents[i]];
+    function slashNonRevealers(uint256 _taskId, address[] calldata _addrs) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        for (uint256 i = 0; i < _addrs.length; i++) {
+            TaskAgentConfig storage cfg = taskAgents[_taskId][_addrs[i]];
             if (cfg.hasCommitted && !cfg.hasRevealed) {
-                agents[_agents[i]].reputation -= 20;
-                if (agents[_agents[i]].reputation == 0) {
-                    agents[_agents[i]].reputation = 1;
-                }
+                uint256 rep = agents[_addrs[i]].reputation;
+                agents[_addrs[i]].reputation = rep > 20 ? rep - 20 : 1;
             }
         }
     }
 
-    // ============ 管理功能 ============
-
-    function suspendAgent(address _agent) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        agents[_agent].status = AgentStatus.Suspended;
-        emit AgentSuspended(_agent);
+    // ============ 管理 ============
+    function suspendAgent(address _a) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        agents[_a].status = AgentStatus.Suspended;
+        emit AgentSuspended(_a);
+    }
+    function reactivateAgent(address _a) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        agents[_a].status = AgentStatus.Active;
+        emit AgentReactivated(_a);
+    }
+    function updateAgentEndpoint(address _a, string calldata _ep) external {
+        require(msg.sender == _a || hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "AR: unauth");
+        agents[_a].endpoint = _ep;
+        emit AgentUpdated(_a);
     }
 
-    function reactivateAgent(address _agent) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        agents[_agent].status = AgentStatus.Active;
-        emit AgentReactivated(_agent);
-    }
-
-    function updateAgentEndpoint(address _agent, string calldata _endpoint) external {
-        require(msg.sender == _agent || hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "AgentRegistry: unauthorized");
-        agents[_agent].endpoint = _endpoint;
-        emit AgentUpdated(_agent);
-    }
-
-    // ============ 查询功能 ============
-
-    function getAgent(address _addr) external view returns (Agent memory) {
-        return agents[_addr];
-    }
-
-    function getAgentList() external view returns (address[] memory) {
-        return agentList;
-    }
-
-    function getTaskAgents(uint256 _taskId) external view returns (address[] memory) {
-        return taskAgentList[_taskId];
-    }
-
-    function getTaskAgentConfig(uint256 _taskId, address _agent) external view returns (TaskAgentConfig memory) {
-        return taskAgents[_taskId][_agent];
-    }
-
-    function getCommitRecord(uint256 _taskId, address _agent) external view returns (CommitRecord memory) {
-        return commits[_taskId][_agent];
-    }
-
-    function getAgentCount() external view returns (uint256) {
-        return agentList.length;
-    }
+    // ============ 查询 ============
+    function getAgent(address _a) external view returns (Agent memory) { return agents[_a]; }
+    function getAgentList() external view returns (address[] memory) { return agentList; }
+    function getTaskAgents(uint256 _id) external view returns (address[] memory) { return taskAgentList[_id]; }
+    function getTaskAgentConfig(uint256 _id, address _a) external view returns (TaskAgentConfig memory) { return taskAgents[_id][_a]; }
+    function getCommitRecord(uint256 _id, address _a) external view returns (CommitRecord memory) { return commits[_id][_a]; }
+    function getAgentCount() external view returns (uint256) { return agentList.length; }
 }

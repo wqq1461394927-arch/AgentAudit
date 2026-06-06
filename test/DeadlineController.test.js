@@ -198,7 +198,7 @@ describe("DeadlineController", function () {
 
       await expect(
         deadlineController.manualTransition(1, 0) // Created
-      ).to.be.revertedWith("DeadlineController: invalid target status");
+      ).to.be.revertedWith("DC: invalid target");
     });
 
     it("should support full lifecycle via manual transition", async function () {

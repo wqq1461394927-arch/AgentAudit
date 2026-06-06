@@ -65,7 +65,7 @@ describe("TaskManager", function () {
         taskManager.connect(user1).registerProjectOwner(
           "MyProject2", "myproject.io", "github.com/my/repo", "me@test.com"
         )
-      ).to.be.revertedWith("TaskManager: already registered");
+      ).to.be.revertedWith("TM: registered");
     });
   });
 
@@ -90,7 +90,7 @@ describe("TaskManager", function () {
     it("should revert on zero bounty", async function () {
       await expect(
         taskManager.connect(user1).createTask(TOKEN, 0, METADATA_URI, MAX_AGENTS)
-      ).to.be.revertedWith("TaskManager: zero bounty");
+      ).to.be.revertedWith("TM: bad args");
     });
 
     it("should revert on zero token address", async function () {
@@ -98,19 +98,19 @@ describe("TaskManager", function () {
         taskManager.connect(user1).createTask(
           ethers.ZeroAddress, ethers.parseEther("1000"), METADATA_URI, MAX_AGENTS
         )
-      ).to.be.revertedWith("TaskManager: zero token");
+      ).to.be.revertedWith("TM: bad args");
     });
 
     it("should revert on empty metadata", async function () {
       await expect(
         taskManager.connect(user1).createTask(TOKEN, ethers.parseEther("1000"), "", MAX_AGENTS)
-      ).to.be.revertedWith("TaskManager: empty metadata");
+      ).to.be.revertedWith("TM: bad args");
     });
 
     it("should revert on zero max agents", async function () {
       await expect(
         taskManager.connect(user1).createTask(TOKEN, ethers.parseEther("1000"), METADATA_URI, 0)
-      ).to.be.revertedWith("TaskManager: zero max agents");
+      ).to.be.revertedWith("TM: bad args");
     });
 
     it("should increment taskId correctly", async function () {
@@ -140,7 +140,7 @@ describe("TaskManager", function () {
 
       await expect(
         taskManager.activateTask(1)
-      ).to.be.revertedWith("TaskManager: only BountyEscrow");
+      ).to.be.revertedWith("TM: only Escrow");
 
       await expect(
         taskManager.connect(user2).activateTask(1)
@@ -181,7 +181,7 @@ describe("TaskManager", function () {
 
     it("should transition Active -> Committing (by deadline controller)", async function () {
       const tid = await setupActivatedTask();
-      await taskManager.transitionToCommitting(tid);
+      await taskManager.transitionPhase(tid, 1, 2);
 
       const task = await taskManager.getTask(tid);
       expect(task.status).to.equal(2); // Committing
@@ -189,8 +189,8 @@ describe("TaskManager", function () {
 
     it("should transition Committing -> Revealing", async function () {
       const tid = await setupActivatedTask();
-      await taskManager.transitionToCommitting(tid);
-      await taskManager.transitionToRevealing(tid);
+      await taskManager.transitionPhase(tid, 1, 2);
+      await taskManager.transitionPhase(tid, 2, 3);
 
       const task = await taskManager.getTask(tid);
       expect(task.status).to.equal(3); // Revealing
@@ -199,15 +199,15 @@ describe("TaskManager", function () {
     it("should revert transition from wrong status", async function () {
       const tid = await setupActivatedTask();
       await expect(
-        taskManager.transitionToRevealing(tid)
-      ).to.be.revertedWith("TaskManager: invalid status");
+        taskManager.transitionPhase(tid, 2, 3)
+      ).to.be.revertedWith("TM: bad status");
     });
 
     it("should transition Revealing -> Clustering", async function () {
       const tid = await setupActivatedTask();
-      await taskManager.transitionToCommitting(tid);
-      await taskManager.transitionToRevealing(tid);
-      await taskManager.transitionToClustering(tid);
+      await taskManager.transitionPhase(tid, 1, 2);
+      await taskManager.transitionPhase(tid, 2, 3);
+      await taskManager.transitionPhase(tid, 3, 4);
 
       const task = await taskManager.getTask(tid);
       expect(task.status).to.equal(4); // Clustering
@@ -215,10 +215,10 @@ describe("TaskManager", function () {
 
     it("should transition Clustering -> Challenging", async function () {
       const tid = await setupActivatedTask();
-      await taskManager.transitionToCommitting(tid);
-      await taskManager.transitionToRevealing(tid);
-      await taskManager.transitionToClustering(tid);
-      await taskManager.transitionToChallenging(tid);
+      await taskManager.transitionPhase(tid, 1, 2);
+      await taskManager.transitionPhase(tid, 2, 3);
+      await taskManager.transitionPhase(tid, 3, 4);
+      await taskManager.transitionPhase(tid, 4, 5);
 
       const task = await taskManager.getTask(tid);
       expect(task.status).to.equal(5); // Challenging
@@ -226,11 +226,11 @@ describe("TaskManager", function () {
 
     it("should transition Challenging -> Settled", async function () {
       const tid = await setupActivatedTask();
-      await taskManager.transitionToCommitting(tid);
-      await taskManager.transitionToRevealing(tid);
-      await taskManager.transitionToClustering(tid);
-      await taskManager.transitionToChallenging(tid);
-      await taskManager.transitionToSettled(tid);
+      await taskManager.transitionPhase(tid, 1, 2);
+      await taskManager.transitionPhase(tid, 2, 3);
+      await taskManager.transitionPhase(tid, 3, 4);
+      await taskManager.transitionPhase(tid, 4, 5);
+      await taskManager.transitionPhase(tid, 5, 6);
 
       const task = await taskManager.getTask(tid);
       expect(task.status).to.equal(6); // Settled
@@ -238,11 +238,11 @@ describe("TaskManager", function () {
 
     it("should close task from Settled", async function () {
       const tid = await setupActivatedTask();
-      await taskManager.transitionToCommitting(tid);
-      await taskManager.transitionToRevealing(tid);
-      await taskManager.transitionToClustering(tid);
-      await taskManager.transitionToChallenging(tid);
-      await taskManager.transitionToSettled(tid);
+      await taskManager.transitionPhase(tid, 1, 2);
+      await taskManager.transitionPhase(tid, 2, 3);
+      await taskManager.transitionPhase(tid, 3, 4);
+      await taskManager.transitionPhase(tid, 4, 5);
+      await taskManager.transitionPhase(tid, 5, 6);
       await taskManager.connect(user1).closeTask(tid);
 
       const task = await taskManager.getTask(tid);
