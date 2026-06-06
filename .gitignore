@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Hardhat / Solidity
+cache/
+artifacts/
+
+# Environment
+.env
+.env.local
+
+# Build output
+.next/
+out/
+dist/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+coverage.json
+
+# TypeScript
+tsconfig.tsbuildinfo
+next-env.d.ts
