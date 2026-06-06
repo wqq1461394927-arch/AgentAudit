@@ -1,0 +1,228 @@
+"""
+Vulnerability Clustering Pipeline - Orchestrates the full clustering workflow:
+1. Normalize reports via LLM
+2. Generate embeddings
+3. Compute similarity pairs
+4. LLM Judge for uncertain pairs
+5. Build clusters using Union-Find
+6. Register clusters with VUL-IDs
+"""
+import json
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+try:
+    from ..models import Cluster, ClusterReport, Dispute, Report, SimilarityPair
+except ImportError:
+    from models import Cluster, ClusterReport, Dispute, Report, SimilarityPair
+from .cluster_registry import cluster_registry
+from .embedding_generator import embedding_generator
+from .llm_judge import llm_judge
+from .normalizer import normalizer
+from .similarity_matcher import similarity_matcher
+
+
+from .union_find import UnionFind
+
+
+async def run_clustering_pipeline(
+    db: AsyncSession,
+    task_id: int,
+    reports_input: list[dict],
+    contract_context: str = "",
+) -> list[dict]:
+    """Run the full clustering pipeline.
+
+    Args:
+        db: Database session.
+        task_id: The task ID.
+        reports_input: List of dicts with report_id, title, description,
+                       submitter, commit_time.
+        contract_context: Optional contract source code for LLM Judge context.
+    """
+    if not reports_input:
+        return []
+
+    # Step 1: Normalize all reports via LLM
+    normalized_reports = await normalizer.normalize_batch(
+        [{"title": r["title"], "description": r.get("description", "")} for r in reports_input]
+    )
+
+    # Merge normalized data with original metadata
+    reports = []
+    for i, r in enumerate(reports_input):
+        reports.append({
+            "report_id": r["report_id"],
+            "title": r["title"],
+            "description": r.get("description", ""),
+            "submitter": r["submitter"],
+            "commit_time": r["commit_time"],
+            **normalized_reports[i],
+        })
+
+    # Step 2: Generate embeddings for all reports
+    embeddings = await embedding_generator.generate_batch(reports)
+
+    # Step 3: Compute pairwise similarities
+    pairs = similarity_matcher.compute_pairs(reports, embeddings)
+
+    # Step 4: LLM Judge for uncertain pairs
+    uncertain = similarity_matcher.get_uncertain_pairs(pairs)
+    if uncertain:
+        judgments = await llm_judge.judge_pairs(uncertain, contract_context)
+        for i, pair in enumerate(uncertain):
+            pair["llm_judgment"] = judgments[i]
+            pair["is_same"] = judgments[i].get("same_vulnerability", False)
+
+    # High-confidence pairs are automatically same
+    for pair in similarity_matcher.get_high_confidence_pairs(pairs):
+        pair["is_same"] = True
+        pair["llm_judgment"] = {
+            "same_vulnerability": True,
+            "confidence": int(pair["cosine_similarity"] * 100),
+            "reason": "High embedding similarity",
+            "key_similarities": [],
+            "key_differences": [],
+        }
+
+    # Low-confidence pairs are different
+    for pair in pairs:
+        if "is_same" not in pair:
+            pair["is_same"] = False
+
+    # Step 5: Union-Find clustering
+    uf = UnionFind()
+    for r in reports:
+        uf.make_set(r["report_id"])
+
+    for pair in pairs:
+        if pair["is_same"]:
+            uf.union(pair["report_a_id"], pair["report_b_id"])
+
+    groups = uf.get_groups()
+
+    # Step 6: Clean up old data for this task (allow re-run)
+    await db.execute(delete(Dispute).where(
+        Dispute.cluster_id.in_(
+            select(Cluster.id).where(Cluster.task_id == task_id)
+        )
+    ))
+    await db.execute(delete(ClusterReport).where(
+        ClusterReport.cluster_id.in_(
+            select(Cluster.id).where(Cluster.task_id == task_id)
+        )
+    ))
+    await db.execute(delete(SimilarityPair).where(
+        SimilarityPair.report_a_id.in_(
+            select(Report.id).where(Report.task_id == task_id)
+        )
+    ))
+    await db.execute(delete(Cluster).where(Cluster.task_id == task_id))
+    await db.execute(delete(Report).where(Report.task_id == task_id))
+    await db.flush()
+
+    # Step 7: Store reports in DB and create clusters
+    # Build report lookup
+    report_map = {r["report_id"]: r for r in reports}
+
+    # Store reports in DB (with embeddings)
+    db_reports = {}
+    for i, r in enumerate(reports):
+        db_report = Report(
+            id=uuid.uuid4(),
+            task_id=task_id,
+            report_id=r["report_id"],
+            title=r["title"],
+            description=r.get("description", ""),
+            vulnerability_type=r.get("vulnerability_type", ""),
+            affected_contract=r.get("affected_contract", ""),
+            affected_function=r.get("affected_function", ""),
+            root_cause=r.get("root_cause", ""),
+            attack_path=r.get("attack_path", ""),
+            impact=r.get("impact", ""),
+            severity=r.get("severity", "Medium"),
+            confidence=r.get("confidence", 0.0),
+            fix_suggestion=r.get("fix_suggestion", ""),
+            embedding=embeddings[i] if i < len(embeddings) else None,
+            submitter=r["submitter"],
+            commit_time=r["commit_time"],
+            is_normalized=True,
+        )
+        db.add(db_report)
+        db_reports[r["report_id"]] = db_report
+
+    await db.commit()
+
+    # Store similarity pairs
+    for pair in pairs:
+        report_a_id = db_reports[pair["report_a_id"]].id
+        report_b_id = db_reports[pair["report_b_id"]].id
+
+        sp = SimilarityPair(
+            report_a_id=report_a_id,
+            report_b_id=report_b_id,
+            cosine_similarity=pair["cosine_similarity"],
+            llm_judgment=(
+                json.dumps(pair["llm_judgment"])
+                if pair.get("llm_judgment")
+                else None
+            ),
+            is_same_vulnerability=pair["is_same"],
+        )
+        db.add(sp)
+
+    await db.commit()
+
+    # Create clusters from groups
+    result_clusters = []
+    for member_ids in groups.values():
+        members = [report_map[rid] for rid in member_ids]
+        cluster = await cluster_registry.create_cluster(
+            db=db,
+            task_id=task_id,
+            report_refs=[
+                {
+                    "report_id": m["report_id"],
+                    "submitter": m["submitter"],
+                    "commit_time": m["commit_time"],
+                }
+                for m in members
+            ],
+        )
+
+        # Build response
+        cluster_data = {
+            "id": str(cluster.id),
+            "task_id": cluster.task_id,
+            "vul_id": cluster.vul_id,
+            "title": cluster.title,
+            "vulnerability_type": cluster.vulnerability_type,
+            "severity": cluster.severity,
+            "first_submitter": cluster.first_submitter,
+            "first_commit_time": cluster.first_commit_time.isoformat()
+            if cluster.first_commit_time
+            else None,
+            "status": cluster.status,
+            "reports": sorted(
+                [
+                    {
+                        "report_id": m["report_id"],
+                        "submitter": m["submitter"],
+                        "commit_time": m["commit_time"].isoformat()
+                        if isinstance(m["commit_time"], datetime)
+                        else m["commit_time"],
+                        "rank": i + 1,
+                    }
+                    for i, m in enumerate(
+                        sorted(members, key=lambda x: x["commit_time"])
+                    )
+                ],
+                key=lambda x: x["rank"],
+            ),
+        }
+        result_clusters.append(cluster_data)
+
+    return result_clusters

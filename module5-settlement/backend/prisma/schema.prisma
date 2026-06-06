@@ -1,0 +1,274 @@
+// Prisma Schema for Module 5 - Settlement & Reputation System
+// 数据库: SQLite (开发/MVP阶段)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== 漏洞与结算 ====================
+
+model Vulnerability {
+  id               String          @id @default(uuid())
+  vulId            String          @unique
+  title            String
+  description      String
+  bounty           Float           @default(0)
+  status           String          @default("PENDING")
+  // Status: PENDING, ACCEPTED, CHALLENGED, ARBITRATING, VALID, INVALID, SETTLED
+  
+  submitter        String
+  projectAddress   String
+  projectName      String?
+  
+  challengeBond    Float?
+  challengeReason  String?
+  challengeAt      DateTime?
+  
+  createdAt        DateTime        @default(now())
+  arbitratedAt     DateTime?
+  settledAt        DateTime?
+  
+  totalConfidence  Float?
+  
+  // 关联关系
+  submissions      Submission[]
+  auditLogs        AuditLog[]
+  rewardDistributions RewardDistribution[]
+  
+  @@index([status])
+  @@index([projectAddress])
+  @@index([createdAt])
+}
+
+model Submission {
+  id               String          @id @default(uuid())
+  vulId            String
+  subVulId         String          // 来自模块4的子漏洞ID
+  
+  submitter        String
+  submitterName    String?
+  walletAddress    String
+  
+  // 来自模块2 (AI发现)
+  agentId          String?
+  confidence       Float?          // AI置信度 0-100
+  
+  // 质量评分 (由人工或AI评估)
+  qualityScore     Float           @default(0)
+  pocQuality       Int?            // PoC质量 1-10
+  fixQuality       Int?            // 修复建议质量 1-10
+  
+  // 来自模块4 (聚类)
+  ranking          Int             @default(0)
+  clusterId        String?
+  
+  // 校准后奖励
+  calibratedReward Float?
+  baseReward       Float?
+  calibrationMult  Float?          // 校准乘数
+  
+  rewarded         Boolean         @default(false)
+  rewardedAt       DateTime?
+  
+  createdAt        DateTime        @default(now())
+  
+  vulnerability    Vulnerability   @relation(fields: [vulId], references: [vulId])
+  
+  @@index([vulId])
+  @@index([submitter])
+  @@index([ranking])
+}
+
+// ==================== 奖励分配记录 ====================
+
+model RewardDistribution {
+  id               String          @id @default(uuid())
+  vulId            String
+  totalBounty     Float           @default(0)
+  
+  // JSON格式的分配明细
+  distributions    String          @default("[]")  // JSON string for SQLite
+  
+  totalDistributed Float           @default(0)
+  platformFee      Float?
+  
+  txHash          String?
+  blockNumber     Int?
+  
+  createdAt       DateTime        @default(now())
+  
+  vulnerability    Vulnerability   @relation(fields: [vulId], references: [vulId])
+  
+  @@index([vulId])
+}
+
+// ==================== 审计师声誉 ====================
+
+model Auditor {
+  id               String          @id @default(uuid())
+  walletAddress    String          @unique
+  name             String
+  email            String?
+  
+  reputation       Float           @default(0)
+  level            String          @default("Rookie")
+  // Level: Rookie, Bronze, Silver, Gold, Elite
+  
+  totalSubmissions Int             @default(0)
+  validSubmissions Int             @default(0)
+  invalidSubmissions Int           @default(0)
+  
+  totalBounty      Float           @default(0)
+  maxSubmissions    Int             @default(5)  // 根据等级限制
+  
+  lastActive       DateTime        @default(now())
+  createdAt        DateTime        @default(now())
+  
+  auditLogs        AuditLog[]
+  
+  @@index([reputation])
+  @@index([level])
+}
+
+// ==================== AI Agent校准 ====================
+
+model AIAgent {
+  id               String          @id @default(uuid())
+  agentId          String          @unique          // Agent唯一标识
+  name             String
+  description      String?
+  
+  // 校准数据
+  totalReports     Int             @default(0)
+  correctPredictions Int            @default(0)
+  calibration      Float           @default(0)     // 0-100%
+  
+  // 置信度追踪
+  avgConfidence    Float           @default(0)
+  avgActualAccuracy Float          @default(0)
+  
+  // 声誉
+  reputation       Float           @default(0)
+  
+  // 校准乘数
+  multiplier       Float           @default(100)    // 基数为100
+  
+  lastCalibration  DateTime        @default(now())
+  createdAt        DateTime        @default(now())
+  
+  @@index([calibration])
+  @@index([reputation])
+}
+
+// ==================== 仲裁员 ====================
+
+model Juror {
+  id               String          @id @default(uuid())
+  walletAddress    String          @unique
+  name             String?
+  
+  stake            Float           @default(0)
+  reputation       Float           @default(100)
+  
+  totalVotes       Int             @default(0)
+  correctVotes     Int             @default(0)
+  incorrectVotes   Int             @default(0)
+  
+  slashedAmount    Float           @default(0)
+  totalRewards     Float           @default(0)
+  
+  active           Boolean         @default(true)
+  lastActive       DateTime        @default(now())
+  createdAt        DateTime        @default(now())
+  
+  @@index([reputation])
+  @@index([active])
+}
+
+// ==================== 仲裁记录 ====================
+
+model Arbitration {
+  id               String          @id @default(uuid())
+  vulId            String
+  status           String          @default("PENDING")
+  // Status: PENDING, VOTING, DECIDED
+  
+  challengeReason  String?
+  challengeBond    Float?
+  
+  // 抽选的仲裁员
+  selectedJurors   String?         // JSON string for SQLite
+  
+  // 投票结果
+  validVotes       Int             @default(0)
+  invalidVotes     Int             @default(0)
+  totalVotes       Int             @default(0)
+  
+  // 最终裁决
+  finalResult      String?         // VALID, INVALID
+  arbitrator       String?         // 裁决者 (MVP为owner)
+  
+  deadline         DateTime?
+  decidedAt        DateTime?
+  
+  createdAt        DateTime        @default(now())
+  
+  @@index([vulId])
+  @@index([status])
+}
+
+// ==================== 审计日志 ====================
+
+model AuditLog {
+  id               String          @id @default(uuid())
+  
+  // 操作类型
+  action          String
+  // Actions: ACCEPT, CHALLENGE, ARBITRATE, SETTLE, REGISTER, UPDATE_REP
+  
+  // 涉及实体
+  vulnerabilityId  String?
+  auditorId        String?
+  agentId          String?
+  jurorId          String?
+  
+  // 操作详情
+  details         String?          // JSON string for SQLite
+  
+  // 操作者
+  operator        String?
+  operatorType    String?          // SYSTEM, ADMIN, PROJECT, AUDITOR
+  
+  txHash          String?
+  blockNumber     Int?
+  
+  createdAt       DateTime        @default(now())
+  
+  vulnerability    Vulnerability?  @relation(fields: [vulnerabilityId], references: [vulId])
+  auditor          Auditor?        @relation(fields: [auditorId], references: [id])
+  
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ==================== Webhook配置 ====================
+
+model WebhookConfig {
+  id               String          @id @default(uuid())
+  name             String
+  event            String          // 触发事件
+  url              String
+  secret           String?
+  active           Boolean         @default(true)
+  retryCount       Int             @default(3)
+  
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  
+  @@index([event])
+}

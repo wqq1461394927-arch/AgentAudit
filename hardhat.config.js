@@ -26,7 +26,7 @@ module.exports = {
         },
     },
     paths: {
-        sources: "./contracts",
+        sources: "./contracts_compile",
         tests: "./test",
         cache: "./cache",
         artifacts: "./artifacts",

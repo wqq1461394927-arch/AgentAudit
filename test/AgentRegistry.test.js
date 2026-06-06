@@ -197,7 +197,10 @@ describe("AgentRegistry", function () {
       const rawFinding = ethers.toUtf8Bytes("reentrancy attack vulnerability found");
       const salt = ethers.randomBytes(32);
       const commitHash = ethers.keccak256(
-        ethers.solidityPacked(["bytes", "bytes32"], [rawFinding, salt])
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["uint256", "address", "bytes", "bytes32"],
+          [1, agent1.address, rawFinding, salt]
+        )
       );
 
       // Commit
@@ -220,7 +223,10 @@ describe("AgentRegistry", function () {
       const rawFinding = ethers.toUtf8Bytes("real finding");
       const salt = ethers.randomBytes(32);
       const commitHash = ethers.keccak256(
-        ethers.solidityPacked(["bytes", "bytes32"], [rawFinding, salt])
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["uint256", "address", "bytes", "bytes32"],
+          [1, agent1.address, rawFinding, salt]
+        )
       );
 
       await agentRegistry.connect(agent1).commitFinding(1, commitHash);
@@ -260,14 +266,24 @@ describe("AgentRegistry", function () {
       // agent1 commits but doesn't reveal, agent2 commits and reveals
       const rawFinding = ethers.toUtf8Bytes("finding");
       const salt = ethers.randomBytes(32);
-      const commitHash = ethers.keccak256(
-        ethers.solidityPacked(["bytes", "bytes32"], [rawFinding, salt])
+      const salt2 = ethers.randomBytes(32);
+      const commitHash1 = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["uint256", "address", "bytes", "bytes32"],
+          [1, agent1.address, rawFinding, salt]
+        )
+      );
+      const commitHash2 = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["uint256", "address", "bytes", "bytes32"],
+          [1, agent2.address, rawFinding, salt2]
+        )
       );
 
-      await agentRegistry.connect(agent1).commitFinding(1, commitHash);
-      await agentRegistry.connect(agent2).commitFinding(1, commitHash);
+      await agentRegistry.connect(agent1).commitFinding(1, commitHash1);
+      await agentRegistry.connect(agent2).commitFinding(1, commitHash2);
       await taskManager.transitionPhase(1, 2, 3);
-      await agentRegistry.connect(agent2).revealFinding(1, rawFinding, salt);
+      await agentRegistry.connect(agent2).revealFinding(1, rawFinding, salt2);
 
       // slash agent1 (committed but didn't reveal)
       await agentRegistry.slashNonRevealers(1, [agent1.address]);

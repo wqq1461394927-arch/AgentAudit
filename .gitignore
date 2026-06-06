@@ -14,7 +14,7 @@ out/
 cache/
 broadcast/
 
-# Hardhat / Solidity (来自另一方)
+# Hardhat / Solidity
 artifacts/
 
 # Environment
@@ -34,10 +34,19 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Coverage (来自另一方)
+# Coverage
 coverage/
 coverage.json
 
-# TypeScript (来自另一方)
+# TypeScript
 tsconfig.tsbuildinfo
 next-env.d.ts
+
+# SQLite databases (dev/test)
+*.db
+*.db-journal
+*.db-wal
+!important-data/*.db
+
+# Temporary / debug output
+push_output.txt

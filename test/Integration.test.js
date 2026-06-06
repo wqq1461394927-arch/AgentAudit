@@ -158,7 +158,10 @@ describe("Integration: Full Audit Workflow", function () {
       secFinding = ethers.toUtf8Bytes("ReentrancyAttack: Vault.withdraw() vulnerable");
       secSalt = ethers.randomBytes(32);
       const secHash = ethers.keccak256(
-        ethers.solidityPacked(["bytes", "bytes32"], [secFinding, secSalt])
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["uint256", "address", "bytes", "bytes32"],
+          [1, securityAgent.address, secFinding, secSalt]
+        )
       );
       await agentRegistry.connect(securityAgent).commitFinding(1, secHash);
 
@@ -166,7 +169,10 @@ describe("Integration: Full Audit Workflow", function () {
       tokFinding = ethers.toUtf8Bytes("FlashLoanAttack: price oracle manipulation possible");
       tokSalt = ethers.randomBytes(32);
       const tokHash = ethers.keccak256(
-        ethers.solidityPacked(["bytes", "bytes32"], [tokFinding, tokSalt])
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["uint256", "address", "bytes", "bytes32"],
+          [1, tokenomicsAgent.address, tokFinding, tokSalt]
+        )
       );
       await agentRegistry.connect(tokenomicsAgent).commitFinding(1, tokHash);
 
@@ -174,7 +180,10 @@ describe("Integration: Full Audit Workflow", function () {
       staFinding = ethers.toUtf8Bytes("IntegerOverflow: unchecked addition in stake()");
       staSalt = ethers.randomBytes(32);
       const staHash = ethers.keccak256(
-        ethers.solidityPacked(["bytes", "bytes32"], [staFinding, staSalt])
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["uint256", "address", "bytes", "bytes32"],
+          [1, staticAgent.address, staFinding, staSalt]
+        )
       );
       await agentRegistry.connect(staticAgent).commitFinding(1, staHash);
 
