@@ -97,7 +97,7 @@ contract DeadlineController is AccessControl, ITypes {
             ,
             uint256 commitDeadline,
             uint256 revealDeadline,
-            uint256 challengeDeadline,
+            ,
             uint8 status
         ) = abi.decode(data, (uint256, uint256, uint256, uint256, uint256, uint8));
 
