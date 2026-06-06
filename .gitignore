@@ -14,6 +14,17 @@ out/
 cache/
 broadcast/
 
+# Hardhat / Solidity (来自另一方)
+artifacts/
+
+# Environment
+.env
+.env.local
+
+# Build output
+.next/
+dist/
+
 # IDE
 .idea/
 .vscode/
@@ -23,10 +34,10 @@ broadcast/
 .DS_Store
 Thumbs.db
 
-# Env
-.env
-.env.local
+# Coverage (来自另一方)
+coverage/
+coverage.json
 
-# Build
-dist/
-.next/
+# TypeScript (来自另一方)
+tsconfig.tsbuildinfo
+next-env.d.ts
