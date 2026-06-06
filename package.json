@@ -1,0 +1,23 @@
+{
+  "name": "ceatdao-contracts",
+  "version": "1.0.0",
+  "description": "CeatDAO - Bug Bounty Audit Platform (Module 1: Task Creation & Fund Lock)",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
+    "node": "hardhat node",
+    "clean": "hardhat clean",
+    "lint": "solhint 'contracts/**/*.sol'",
+    "server": "cd server && npm run dev",
+    "frontend": "cd frontend && npm run dev"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@openzeppelin/contracts": "^5.0.0",
+    "hardhat": "^2.19.0",
+    "dotenv": "^16.3.0",
+    "solhint": "^4.0.0"
+  }
+}

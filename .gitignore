@@ -1,8 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
 
+# Node
 node_modules/
-.env
-.DS_Store
-dist/
-build/
+package-lock.json
+
+# Foundry
+out/
 cache/
-nodejs/
+broadcast/
+
+# Hardhat / Solidity (来自另一方)
+artifacts/
+
+# Environment
+.env
+.env.local
+
+# Build output
+.next/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage (来自另一方)
+coverage/
+coverage.json
+
+# TypeScript (来自另一方)
+tsconfig.tsbuildinfo
+next-env.d.ts
