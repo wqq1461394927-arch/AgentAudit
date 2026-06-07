@@ -9,14 +9,17 @@ export const config = {
     key: process.env.SUPABASE_SERVICE_KEY || '',
   },
   rpc: {
-    url: process.env.RPC_URL || 'http://localhost:8545',
-    chainId: parseInt(process.env.CHAIN_ID || '31337', 10),
+    url: process.env.RPC_URL || 'https://eth-sepolia.g.alchemy.com/v2/demo',
+    chainId: parseInt(process.env.CHAIN_ID || '11155111', 10),
   },
   contracts: {
     taskManager: process.env.TASK_MANAGER_ADDRESS || '',
     bountyEscrow: process.env.BOUNTY_ESCROW_ADDRESS || '',
     agentRegistry: process.env.AGENT_REGISTRY_ADDRESS || '',
     deadlineController: process.env.DEADLINE_CONTROLLER_ADDRESS || '',
+    settlement: process.env.SETTLEMENT_ADDRESS || '',
+    reputationSystem: process.env.REPUTATION_SYSTEM_ADDRESS || '',
+    usdcToken: process.env.USDC_TOKEN_ADDRESS || '',
   },
 } as const;
 
@@ -30,6 +33,9 @@ export function validateConfig(): void {
   if (!config.contracts.bountyEscrow) required.push('BOUNTY_ESCROW_ADDRESS');
   if (!config.contracts.agentRegistry) required.push('AGENT_REGISTRY_ADDRESS');
   if (!config.contracts.deadlineController) required.push('DEADLINE_CONTROLLER_ADDRESS');
+  if (!config.contracts.settlement) required.push('SETTLEMENT_ADDRESS');
+  if (!config.contracts.reputationSystem) required.push('REPUTATION_SYSTEM_ADDRESS');
+  if (!config.contracts.usdcToken) required.push('USDC_TOKEN_ADDRESS');
 
   if (required.length > 0) {
     console.warn(

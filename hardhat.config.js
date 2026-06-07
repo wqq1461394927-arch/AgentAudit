@@ -23,6 +23,8 @@ module.exports = {
         sepolia: {
             url: process.env.SEPOLIA_RPC_URL || "",
             accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+            chainId: 11155111,
+            gasPrice: 100000000000,  // 100 gwei — 覆盖 pending tx
         },
     },
     paths: {
